@@ -89,4 +89,42 @@ int CountPositionsByMagic(const string symbol,ulong magic)
    return GetPositionTickets(symbol,magic,tickets);
   }
 
+double CurrentSpreadPips(const string symbol)
+  {
+   double ask=SymbolInfoDouble(symbol,SYMBOL_ASK);
+   double bid=SymbolInfoDouble(symbol,SYMBOL_BID);
+   return PriceToPips(symbol,ask-bid);
+  }
+
+string TimeframeLabel(ENUM_TIMEFRAMES timeframe)
+  {
+   string label=EnumToString(timeframe);
+   StringReplace(label,"PERIOD_","");
+   return label;
+  }
+
+datetime StartOfDay(datetime t)
+  {
+   MqlDateTime dt;
+   TimeToStruct(t,dt);
+   dt.hour=0; dt.min=0; dt.sec=0;
+   return StructToTime(dt);
+  }
+
+datetime StartOfWeek(datetime t)
+  {
+   MqlDateTime dt;
+   TimeToStruct(t,dt);
+   int daysSinceMonday=(dt.day_of_week==0)?6:(dt.day_of_week-1);
+   return StartOfDay(t)-daysSinceMonday*86400;
+  }
+
+datetime StartOfMonth(datetime t)
+  {
+   MqlDateTime dt;
+   TimeToStruct(t,dt);
+   dt.day=1; dt.hour=0; dt.min=0; dt.sec=0;
+   return StructToTime(dt);
+  }
+
 #endif

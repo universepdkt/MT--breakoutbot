@@ -1,12 +1,25 @@
 #property copyright "BreakoutStopBot"
 #property version   "1.00"
 #property strict
-#property description "1-minute breakout bot: places Buy Stop / Sell Stop at the prior candle's "
+#property description "Candle breakout bot: places Buy Stop / Sell Stop at the prior candle's "
 #property description "high/low every bar (OCO pair), manages TP/SL, breakeven, early drawdown exit."
 
 #include <Trade/Trade.mqh>
 #include <BreakoutStopBot/TradeUtils.mqh>
 #include <BreakoutStopBot/RiskManager.mqh>
+#include <BreakoutStopBot/Dashboard.mqh>
+
+// Capped at M1/M3/M5 - this is a short-timeframe breakout system and isn't
+// intended (or validated) for slower candles.
+enum ENUM_BOT_TIMEFRAME
+  {
+   BOT_PERIOD_M1=PERIOD_M1,
+   BOT_PERIOD_M3=PERIOD_M3,
+   BOT_PERIOD_M5=PERIOD_M5
+  };
+
+input group "=== Timeframe ==="
+input ENUM_BOT_TIMEFRAME InpTimeframe = BOT_PERIOD_M1;  // Candle timeframe (M1/M3/M5 only)
 
 input group "=== Take Profit / Stop Loss ==="
 input double InpTakeProfitPips         = 100.0;  // Take profit distance (pips)
@@ -39,13 +52,20 @@ input int    InpSlippagePips           = 2;      // Max slippage for market oper
 input ulong  InpMagicNumber            = 20260904;
 input bool   InpCancelPendingOnRemove  = true;   // Cancel our pending stops when the EA is removed
 
-CTrade    trade;
-datetime  g_lastBarTime          = 0;
-ulong     g_pendingBuyStopTicket = 0;
-ulong     g_pendingSellStopTicket= 0;
+input group "=== Dashboard ==="
+input bool   InpShowDashboard          = true;   // Show on-chart P/L dashboard
+input int    InpDashboardRefreshSeconds= 5;      // How often the dashboard recalculates
+
+CTrade           trade;
+ENUM_TIMEFRAMES  g_timeframe             = PERIOD_M1;
+datetime         g_lastBarTime           = 0;
+ulong            g_pendingBuyStopTicket  = 0;
+ulong            g_pendingSellStopTicket = 0;
 
 int OnInit()
   {
+   g_timeframe=(ENUM_TIMEFRAMES)InpTimeframe;
+
    trade.SetExpertMagicNumber(InpMagicNumber);
    trade.SetTypeFillingBySymbol(_Symbol);
 
@@ -59,16 +79,28 @@ int OnInit()
       Print("WARNING: account is not a hedging account. This EA assumes independent per-order "
             "positions and has not been validated on netting accounts.");
 
-   if(_Period!=PERIOD_M1)
-      Print("WARNING: chart timeframe is not M1. This EA reads M1 candle data internally, but "
-            "run it on an M1 chart for accurate new-bar timing.");
+   if(_Period!=g_timeframe)
+      Print("WARNING: chart timeframe is not ",TimeframeLabel(g_timeframe),". This EA reads ",
+            TimeframeLabel(g_timeframe)," candle data internally regardless of chart period, but "
+            "run it on a matching chart for accurate new-bar timing.");
 
-   g_lastBarTime=iTime(_Symbol,PERIOD_M1,0);
+   g_lastBarTime=iTime(_Symbol,g_timeframe,0);
+
+   if(InpShowDashboard)
+     {
+      CreateDashboardBackground();
+      UpdateDashboard(_Symbol,InpMagicNumber,g_timeframe);
+      EventSetTimer(MathMax(1,InpDashboardRefreshSeconds));
+     }
+
    return(INIT_SUCCEEDED);
   }
 
 void OnDeinit(const int reason)
   {
+   EventKillTimer();
+   RemoveDashboard();
+
    if(InpCancelPendingOnRemove && reason==REASON_REMOVE)
      {
       if(g_pendingBuyStopTicket!=0 && OrderSelect(g_pendingBuyStopTicket))
@@ -78,12 +110,18 @@ void OnDeinit(const int reason)
      }
   }
 
+void OnTimer()
+  {
+   if(InpShowDashboard)
+      UpdateDashboard(_Symbol,InpMagicNumber,g_timeframe);
+  }
+
 void OnTick()
   {
    EnforceOco();
    ManageBreakeven();
 
-   if(IsNewBar(_Symbol,PERIOD_M1,g_lastBarTime))
+   if(IsNewBar(_Symbol,g_timeframe,g_lastBarTime))
       OnNewBar();
   }
 
@@ -92,9 +130,12 @@ void OnNewBar()
    CloseDrawdownPositions();
    CancelStalePendingOrders();
 
+   if(InpShowDashboard)
+      UpdateDashboard(_Symbol,InpMagicNumber,g_timeframe);
+
    if(!SpreadOk())
      {
-      Print("Spread ",DoubleToString(CurrentSpreadPips(),1)," pips exceeds max ",
+      Print("Spread ",DoubleToString(CurrentSpreadPips(_Symbol),1)," pips exceeds max ",
             DoubleToString(InpMaxSpreadPips,1),", skipping new stop orders this bar.");
       return;
      }
@@ -160,8 +201,8 @@ void EnforceOco()
 
 void PlaceBreakoutStops()
   {
-   double prevHigh=iHigh(_Symbol,PERIOD_M1,1);
-   double prevLow =iLow(_Symbol,PERIOD_M1,1);
+   double prevHigh=iHigh(_Symbol,g_timeframe,1);
+   double prevLow =iLow(_Symbol,g_timeframe,1);
    if(prevHigh<=0.0 || prevLow<=0.0)
      {
       Print("Invalid previous candle data, skipping stop placement.");
@@ -229,7 +270,7 @@ void ManageBreakeven()
    int n=GetPositionTickets(_Symbol,InpMagicNumber,tickets);
    if(n==0) return;
 
-   double spreadPips=CurrentSpreadPips();
+   double spreadPips=CurrentSpreadPips(_Symbol);
    double bePips=spreadPips+InpBreakevenBufferPips;
    double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
    double ask=SymbolInfoDouble(_Symbol,SYMBOL_ASK);
@@ -268,18 +309,11 @@ void ManageBreakeven()
      }
   }
 
-double CurrentSpreadPips()
-  {
-   double ask=SymbolInfoDouble(_Symbol,SYMBOL_ASK);
-   double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
-   return PriceToPips(_Symbol,ask-bid);
-  }
-
 bool SpreadOk()
   {
    if(InpMaxSpreadPips<=0.0)
       return true;
-   return CurrentSpreadPips()<=InpMaxSpreadPips;
+   return CurrentSpreadPips(_Symbol)<=InpMaxSpreadPips;
   }
 
 bool WithinSession()
