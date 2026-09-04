@@ -53,7 +53,7 @@ On every new M1 bar (once, at the bar's first tick):
 | `InpRiskPercent` | 1.0 | Risk per trade, % of account balance (if `InpUseRiskPercent`) |
 | `InpLotSize` | 0.01 | Fixed lot size (if not using risk-percent sizing) |
 | `InpMaxConcurrentPositions` | 3 | Cap on simultaneously open positions from this EA |
-| `InpMaxSpreadPips` | 3.0 | Skip placing new stops this bar if spread exceeds this |
+| `InpMaxSpreadPips` | 3.0 | Skip placing new stops this bar if spread exceeds this; `0` disables the filter |
 | `InpUseSessionFilter` | false | Restrict new stop placement to a server-time window |
 | `InpTradingStartHour` / `InpTradingEndHour` | 0 / 24 | Session window (server time, hour granularity) |
 | `InpSlippagePips` | 2 | Max slippage allowed for market operations (e.g. drawdown close) |
@@ -83,3 +83,9 @@ On every new M1 bar (once, at the bar's first tick):
 - **High-frequency stop placement**: a breakout system re-arming every minute
   is very sensitive to spread and slippage costs; backtest with realistic
   spread/commission modeling before running live.
+- **Strategy Tester spread**: in "Every tick" (generated) mode without real
+  tick data, MT5 synthesizes bid/ask using the symbol's default spread
+  setting, which can be unrealistically wide (tens of pips) and cause
+  `InpMaxSpreadPips` to block every bar. Use "Every tick based on real ticks"
+  when available, or temporarily set `InpMaxSpreadPips = 0` to disable the
+  filter while debugging the rest of the logic.

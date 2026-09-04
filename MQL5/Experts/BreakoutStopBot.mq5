@@ -27,7 +27,7 @@ input double InpLotSize                = 0.01;   // Fixed lot size (if !InpUseRi
 
 input group "=== Risk Controls ==="
 input int    InpMaxConcurrentPositions = 3;      // Max simultaneously open positions from this EA
-input double InpMaxSpreadPips          = 3.0;    // Skip placing new stops if spread exceeds this
+input double InpMaxSpreadPips          = 3.0;    // Skip placing new stops if spread exceeds this; 0 = disabled
 
 input group "=== Session Filter ==="
 input bool   InpUseSessionFilter       = false;  // Restrict new stop placement to a time window
@@ -277,6 +277,8 @@ double CurrentSpreadPips()
 
 bool SpreadOk()
   {
+   if(InpMaxSpreadPips<=0.0)
+      return true;
    return CurrentSpreadPips()<=InpMaxSpreadPips;
   }
 
