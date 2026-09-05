@@ -1,10 +1,12 @@
 # BreakoutStopBot
 
-MT5 Expert Advisor implementing a 1-minute candle breakout system: on every new
-M1 bar, it places a Buy Stop above and a Sell Stop below the just-closed
-candle's high/low (OCO pair), manages take-profit/stop-loss, moves losing-risk
-to breakeven once a position is far enough in profit, and closes any position
-still in floating loss at the next candle close.
+MT5 Expert Advisor implementing a short-timeframe candle breakout system: on
+every new candle (M1, M3, or M5 — see `InpTimeframe`), it places a Buy Stop
+above and a Sell Stop below the just-closed candle's high/low (OCO pair),
+manages take-profit/stop-loss, moves losing-risk to breakeven once a position
+is far enough in profit, and closes any position still in floating loss at
+the next candle close. An on-chart dashboard shows today/week/month P/L and
+other live stats.
 
 ## Requirements
 
@@ -12,9 +14,10 @@ still in floating loss at the next candle close.
   its own SL/TP. This EA has not been validated on netting accounts (only one
   net position per symbol) and will log a warning on `OnInit` if the account
   isn't in `ACCOUNT_MARGIN_MODE_RETAIL_HEDGING`.
-- Run on an **M1 chart**. The EA reads M1 candle data internally regardless of
-  chart timeframe, but relies on `iTime(..., PERIOD_M1, 0)` changing to detect
-  new bars — run it on M1 so tick delivery lines up as expected.
+- Run on a chart matching `InpTimeframe`. The EA reads candle data for that
+  timeframe internally regardless of the chart's own period, but relies on
+  `iTime()` changing to detect new bars — run it on a matching chart so tick
+  delivery lines up as expected.
 
 ## Logic
 
@@ -27,7 +30,7 @@ Every tick:
    small guaranteed profit. This check recomputes from position state every
    time (no separate "already armed" flag), so it's safe across EA restarts.
 
-On every new M1 bar (once, at the bar's first tick):
+On every new candle (once, at the bar's first tick):
 1. **Drawdown close** — any open position (from this EA) currently in
    floating loss is closed at market immediately, rather than waiting for the
    fixed stop loss.
@@ -39,10 +42,15 @@ On every new M1 bar (once, at the bar's first tick):
    `previous candle low − InpEntryBufferPips`, each with its own
    `InpTakeProfitPips` / `InpStopLossPips`.
 
+On a timer (every `InpDashboardRefreshSeconds`) and after each new candle's
+maintenance pass, the on-chart dashboard recalculates from trade history and
+current positions.
+
 ## Inputs
 
 | Input | Default | Description |
 |---|---|---|
+| `InpTimeframe` | M1 | Candle timeframe the breakout logic runs on; only M1, M3, M5 are selectable |
 | `InpTakeProfitPips` | 100 | Take profit distance from entry, in pips |
 | `InpStopLossPips` | 50 | Stop loss distance from entry, in pips |
 | `InpBreakevenTriggerPips` | 20 | Floating profit needed before breakeven arms |
@@ -53,12 +61,31 @@ On every new M1 bar (once, at the bar's first tick):
 | `InpRiskPercent` | 1.0 | Risk per trade, % of account balance (if `InpUseRiskPercent`) |
 | `InpLotSize` | 0.01 | Fixed lot size (if not using risk-percent sizing) |
 | `InpMaxConcurrentPositions` | 3 | Cap on simultaneously open positions from this EA |
-| `InpMaxSpreadPips` | 3.0 | Skip placing new stops this bar if spread exceeds this |
+| `InpMaxSpreadPips` | 3.0 | Skip placing new stops this bar if spread exceeds this; `0` disables the filter |
 | `InpUseSessionFilter` | false | Restrict new stop placement to a server-time window |
 | `InpTradingStartHour` / `InpTradingEndHour` | 0 / 24 | Session window (server time, hour granularity) |
 | `InpSlippagePips` | 2 | Max slippage allowed for market operations (e.g. drawdown close) |
 | `InpMagicNumber` | 20260904 | Identifies this EA's orders/positions |
 | `InpCancelPendingOnRemove` | true | Cancel this EA's pending stop orders when it's removed from the chart |
+| `InpShowDashboard` | true | Show the on-chart P/L dashboard |
+| `InpDashboardRefreshSeconds` | 5 | How often the dashboard recalculates from trade history |
+
+## Dashboard
+
+When `InpShowDashboard` is enabled, a panel appears in the chart's top-left
+corner (rendered as chart objects, prefixed `BOS_DASH_`, removed automatically
+on `OnDeinit`) showing:
+
+- Account balance / equity and current spread / open position count
+- **Today**, **Week** (Monday–now), and **Month** (1st–now) realized P/L and
+  trade counts, computed from `HistorySelect` filtered to this EA's symbol
+  and magic number
+- Current floating P/L across this EA's open positions
+- Win rate for the week and month
+
+It updates on a timer (`InpDashboardRefreshSeconds`) and after each new
+candle's maintenance pass, and works in the Strategy Tester's visual mode as
+well as live/demo charts.
 
 ## Install
 
@@ -66,7 +93,8 @@ On every new M1 bar (once, at the bar's first tick):
    `MQL5/Include/BreakoutStopBot/` folder into your terminal's `MQL5/Experts`
    and `MQL5/Include` directories (Data Folder → `MQL5/`).
 2. Compile `BreakoutStopBot.mq5` in MetaEditor.
-3. Attach to an M1 chart, enable AutoTrading, set inputs.
+3. Attach to a chart matching `InpTimeframe` (M1/M3/M5), enable AutoTrading,
+   set inputs.
 
 ## Known limitations / risks
 
@@ -83,3 +111,9 @@ On every new M1 bar (once, at the bar's first tick):
 - **High-frequency stop placement**: a breakout system re-arming every minute
   is very sensitive to spread and slippage costs; backtest with realistic
   spread/commission modeling before running live.
+- **Strategy Tester spread**: in "Every tick" (generated) mode without real
+  tick data, MT5 synthesizes bid/ask using the symbol's default spread
+  setting, which can be unrealistically wide (tens of pips) and cause
+  `InpMaxSpreadPips` to block every bar. Use "Every tick based on real ticks"
+  when available, or temporarily set `InpMaxSpreadPips = 0` to disable the
+  filter while debugging the rest of the logic.
